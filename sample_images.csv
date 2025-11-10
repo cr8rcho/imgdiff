@@ -1,0 +1,5 @@
+image1_path,image2_path,name,description
+image1.png,image2.png,테스트 이미지,생성된 테스트 이미지 비교
+v1_001.png,v2_001.png,버전 비교,버전 1과 버전 2 비교
+identical1.png,identical2.png,동일 이미지,동일한 이미지 테스트
+small_image.png,large_image.png,크기 차이,크기가 다른 이미지 비교

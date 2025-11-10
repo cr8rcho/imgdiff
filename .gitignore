@@ -1,0 +1,35 @@
+# 가상 환경
+venv/
+env/
+*.pyc
+__pycache__/
+
+# 구글 인증 파일 (민감한 정보)
+credentials.json
+token.pickle
+token.json
+*.pickle
+
+# 결과 파일
+comparison_results/
+csv_comparison_results/
+googlesheet_results/
+my_comparison/
+my_results/
+
+# 테스트 이미지
+*.png
+*.jpg
+*.jpeg
+!sample_*.png
+
+# 로컬 설정
+.DS_Store
+.env
+.vscode/
+.idea/
+
+# 임시 파일
+*.tmp
+*.bak
+*~
