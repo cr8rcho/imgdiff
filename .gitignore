@@ -14,6 +14,7 @@ token.json
 comparison_results/
 csv_comparison_results/
 googlesheet_results/
+googlesheet_url_results/
 my_comparison/
 my_results/
 

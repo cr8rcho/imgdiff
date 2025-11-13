@@ -38,10 +38,15 @@ class GoogleSheetURLImageComparator:
     SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 
     def __init__(self, spreadsheet_id: str, range_name: str = 'B3:C',
-                 output_dir: str = 'googlesheet_url_results'):
+                 output_dir: str = 'googlesheet_url_results',
+                 threshold: int = 20, morphology_kernel_size: int = 3,
+                 blur_kernel_size: int = 0):
         self.spreadsheet_id = spreadsheet_id
         self.range_name = range_name
         self.output_dir = output_dir
+        self.threshold = threshold
+        self.morphology_kernel_size = morphology_kernel_size
+        self.blur_kernel_size = blur_kernel_size
         self.service = None
         self.results = []
         self.temp_dir = None
@@ -221,13 +226,23 @@ class GoogleSheetURLImageComparator:
 
                 # 이미지 비교
                 comparator = ImageComparator(img1_path, img2_path)
-                stats = comparator.get_statistics()
 
+                # 원본 통계 (필터링 없음)
+                stats_original = comparator.get_statistics(threshold=self.threshold)
+
+                # 처리된 통계 (OpenCV 필터링 적용 - 실제 표시되는 것과 일치)
+                stats_processed = comparator.get_processed_statistics(
+                    threshold=self.threshold,
+                    morphology_kernel_size=self.morphology_kernel_size,
+                    blur_kernel_size=self.blur_kernel_size
+                )
+
+                # result에는 처리된 통계 사용 (실제 이미지와 일치)
                 result.update({
                     'status': 'success',
-                    'diff_percentage': stats['diff_percentage'],
-                    'changed_pixels': stats['changed_pixels'],
-                    'changed_percentage': stats['changed_percentage'],
+                    'diff_percentage': stats_processed['diff_percentage'],
+                    'changed_pixels': stats_processed['changed_pixels'],
+                    'changed_percentage': stats_processed['changed_percentage'],
                     'image_size': comparator.img1.size
                 })
 
@@ -235,13 +250,23 @@ class GoogleSheetURLImageComparator:
                 row_dir = os.path.join(self.output_dir, f"row_{pair['row']}")
                 os.makedirs(row_dir, exist_ok=True)
 
-                # 차이 이미지 저장
-                diff_img = comparator.create_diff_image('highlight')
+                # 차이 이미지 저장 (형태학적 연산 적용)
+                diff_img = comparator.create_diff_image(
+                    'highlight',
+                    threshold=self.threshold,
+                    morphology_kernel_size=self.morphology_kernel_size,
+                    blur_kernel_size=self.blur_kernel_size
+                )
                 diff_img.save(os.path.join(row_dir, 'diff_highlight.png'))
 
-                # 나란히 비교 이미지 저장
+                # 나란히 비교 이미지 저장 (새로운 파라미터 적용)
                 side_by_side_path = os.path.join(row_dir, 'side_by_side.png')
-                comparator.create_side_by_side_comparison(side_by_side_path)
+                comparator.create_side_by_side_comparison(
+                    side_by_side_path,
+                    threshold=self.threshold,
+                    morphology_kernel_size=self.morphology_kernel_size,
+                    blur_kernel_size=self.blur_kernel_size
+                )
 
                 # 통계 정보 JSON으로 저장
                 import json
@@ -261,12 +286,18 @@ class GoogleSheetURLImageComparator:
                         return [convert_numpy(item) for item in obj]
                     return obj
 
-                stats_converted = convert_numpy(stats)
+                # 두 가지 통계를 모두 저장
+                combined_stats = {
+                    'original': convert_numpy(stats_original),
+                    'processed': convert_numpy(stats_processed),
+                    'note': 'The "processed" statistics match the red highlighted areas in diff_highlight.png. "original" statistics are based on raw pixel differences without filtering.'
+                }
+
                 stats_path = os.path.join(row_dir, 'stats.json')
                 with open(stats_path, 'w', encoding='utf-8') as f:
-                    json.dump(stats_converted, f, indent=2, ensure_ascii=False)
+                    json.dump(combined_stats, f, indent=2, ensure_ascii=False)
 
-                print(f"  ✅ 성공: 차이율 {stats['diff_percentage']:.2f}%")
+                print(f"  ✅ 성공: 차이율 {stats_processed['diff_percentage']:.2f}% (처리 후: {stats_processed['changed_percentage']:.2f}%)")
 
             except Exception as e:
                 result.update({
@@ -394,13 +425,22 @@ def main():
                        help='결과 저장 디렉토리')
     parser.add_argument('--update-sheet', action='store_true',
                        help='결과를 구글 시트에 업데이트')
+    parser.add_argument('--threshold', type=int, default=30,
+                       help='차이 감지 임계값 (기본값: 30, 높을수록 민감도 낮음)')
+    parser.add_argument('--morphology-kernel-size', type=int, default=3,
+                       help='형태학적 연산 커널 크기 (기본값: 3, 0이면 비활성화)')
+    parser.add_argument('--blur-kernel-size', type=int, default=0,
+                       help='가우시안 블러 커널 크기 (기본값: 0, 0이면 비활성화)')
 
     args = parser.parse_args()
 
     comparator = GoogleSheetURLImageComparator(
         args.spreadsheet_id,
         args.range,
-        args.output_dir
+        args.output_dir,
+        threshold=args.threshold,
+        morphology_kernel_size=args.morphology_kernel_size,
+        blur_kernel_size=args.blur_kernel_size
     )
 
     try:

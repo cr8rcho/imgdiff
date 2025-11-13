@@ -11,6 +11,7 @@ import os
 from typing import Tuple, Optional
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+import cv2
 
 
 class ImageComparator:
@@ -60,8 +61,13 @@ class ImageComparator:
 
         return self.diff_array
 
-    def get_statistics(self) -> dict:
-        """차이에 대한 통계를 계산합니다."""
+    def get_statistics(self, threshold: int = 10) -> dict:
+        """
+        차이에 대한 통계를 계산합니다.
+
+        Args:
+            threshold: 변경된 픽셀로 간주할 차이 임계값 (기본값: 10)
+        """
         if self.diff_array is None:
             self.calculate_difference()
 
@@ -77,7 +83,6 @@ class ImageComparator:
         diff_percentage = (actual_diff / max_possible_diff) * 100
 
         # 변경된 픽셀 수 (임계값 기준)
-        threshold = 10  # 채널당 10 이상 차이가 나면 변경된 것으로 간주
         diff_mask = np.any(self.diff_array > threshold, axis=2)
         changed_pixels = np.sum(diff_mask)
         changed_percentage = (changed_pixels / total_pixels) * 100
@@ -101,12 +106,80 @@ class ImageComparator:
 
         return stats
 
-    def create_diff_image(self, mode: str = 'difference') -> Image.Image:
+    def get_processed_statistics(self, threshold: int = 20,
+                                 morphology_kernel_size: int = 0,
+                                 blur_kernel_size: int = 0) -> dict:
+        """
+        OpenCV 처리 후 마스크 기반 통계를 계산합니다.
+        create_diff_image의 'highlight' 모드와 동일한 처리를 적용합니다.
+
+        Args:
+            threshold: 차이 임계값 (기본값: 20)
+            morphology_kernel_size: 형태학적 연산 커널 크기 (0이면 비활성화)
+            blur_kernel_size: Gaussian blur 커널 크기 (0이면 비활성화)
+
+        Returns:
+            처리된 마스크 기반 통계 정보
+        """
+        if self.diff_array is None:
+            self.calculate_difference()
+
+        total_pixels = self.diff_array.shape[0] * self.diff_array.shape[1]
+
+        # 원본 마스크 생성 (create_diff_image의 'highlight' 모드와 동일)
+        diff_mask = np.any(self.diff_array > threshold, axis=2).astype(np.uint8)
+
+        # 형태학적 연산 적용
+        if morphology_kernel_size > 0:
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,
+                                               (morphology_kernel_size, morphology_kernel_size))
+            diff_mask = cv2.morphologyEx(diff_mask, cv2.MORPH_OPEN, kernel)
+
+        # Gaussian blur 적용
+        if blur_kernel_size > 0:
+            if blur_kernel_size % 2 == 0:
+                blur_kernel_size += 1
+            diff_mask_float = diff_mask.astype(np.float32)
+            diff_mask_blurred = cv2.GaussianBlur(diff_mask_float, (blur_kernel_size, blur_kernel_size), 0)
+            diff_mask = (diff_mask_blurred > 0.5).astype(np.uint8)
+
+        # 처리된 마스크에서 통계 계산
+        changed_pixels = np.sum(diff_mask)
+        changed_percentage = (changed_pixels / total_pixels) * 100
+
+        # 처리된 영역의 실제 차이 계산
+        diff_mask_bool = diff_mask.astype(bool)
+        if changed_pixels > 0:
+            # 변경된 영역의 실제 픽셀 차이 합계
+            actual_diff_in_region = np.sum(self.diff_array[diff_mask_bool])
+        else:
+            actual_diff_in_region = 0
+
+        max_possible_diff = total_pixels * 255 * 3  # RGB 3채널
+        diff_percentage = (actual_diff_in_region / max_possible_diff) * 100 if max_possible_diff > 0 else 0
+
+        return {
+            'total_pixels': int(total_pixels),
+            'changed_pixels': int(changed_pixels),
+            'changed_percentage': float(changed_percentage),
+            'diff_percentage': float(diff_percentage),
+            'processing_applied': {
+                'threshold': threshold,
+                'morphology_kernel': morphology_kernel_size,
+                'blur_kernel': blur_kernel_size
+            }
+        }
+
+    def create_diff_image(self, mode: str = 'difference', threshold: int = 20,
+                          morphology_kernel_size: int = 0, blur_kernel_size: int = 0) -> Image.Image:
         """
         차이를 시각화한 이미지를 생성합니다.
 
         Args:
             mode: 시각화 모드 ('difference', 'highlight', 'heatmap')
+            threshold: 차이 임계값 (기본값: 20)
+            morphology_kernel_size: 형태학적 연산 커널 크기 (0이면 비활성화, 기본값: 0)
+            blur_kernel_size: Gaussian blur 커널 크기 (0이면 비활성화, 기본값: 0)
         """
         if self.diff_array is None:
             self.calculate_difference()
@@ -117,8 +190,27 @@ class ImageComparator:
 
         elif mode == 'highlight':
             # 차이가 있는 부분을 빨간색으로 강조
-            threshold = 20
-            diff_mask = np.any(self.diff_array > threshold, axis=2)
+            diff_mask = np.any(self.diff_array > threshold, axis=2).astype(np.uint8)
+
+            # 형태학적 연산 적용 (노이즈 제거)
+            if morphology_kernel_size > 0:
+                kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,
+                                                   (morphology_kernel_size, morphology_kernel_size))
+                # Opening: erosion → dilation (작은 노이즈 제거)
+                diff_mask = cv2.morphologyEx(diff_mask, cv2.MORPH_OPEN, kernel)
+
+            # Gaussian blur 적용 (외곽선 부드럽게)
+            if blur_kernel_size > 0:
+                # blur_kernel_size는 홀수여야 함
+                if blur_kernel_size % 2 == 0:
+                    blur_kernel_size += 1
+                diff_mask_float = diff_mask.astype(np.float32)
+                diff_mask_blurred = cv2.GaussianBlur(diff_mask_float, (blur_kernel_size, blur_kernel_size), 0)
+                # threshold 다시 적용
+                diff_mask = (diff_mask_blurred > 0.5).astype(np.uint8)
+
+            # Boolean mask로 변환
+            diff_mask_bool = diff_mask.astype(bool)
 
             # 원본 이미지를 회색조로 변환
             base_img = self.img1.convert('L').convert('RGB')
@@ -126,7 +218,7 @@ class ImageComparator:
 
             # 차이가 있는 부분을 빨간색으로 표시
             highlight_array = base_array.copy()
-            highlight_array[diff_mask] = [255, 0, 0]
+            highlight_array[diff_mask_bool] = [255, 0, 0]
 
             diff_img = Image.fromarray(highlight_array.astype('uint8'))
 
@@ -150,19 +242,28 @@ class ImageComparator:
 
         return diff_img
 
-    def find_changed_regions(self, threshold: int = 20, min_area: int = 100) -> list:
+    def find_changed_regions(self, threshold: int = 20, min_area: int = 100,
+                            morphology_kernel_size: int = 0) -> list:
         """
         변경된 영역을 찾아 바운딩 박스로 반환합니다.
 
         Args:
             threshold: 차이 임계값
             min_area: 최소 영역 크기
+            morphology_kernel_size: 형태학적 연산 커널 크기 (0이면 비활성화)
         """
         if self.diff_array is None:
             self.calculate_difference()
 
         # 차이가 임계값 이상인 픽셀 마스크
         diff_mask = np.any(self.diff_array > threshold, axis=2).astype(np.uint8)
+
+        # 형태학적 연산 적용 (노이즈 제거)
+        if morphology_kernel_size > 0:
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,
+                                               (morphology_kernel_size, morphology_kernel_size))
+            # Opening: erosion → dilation (작은 노이즈 제거)
+            diff_mask = cv2.morphologyEx(diff_mask, cv2.MORPH_OPEN, kernel)
 
         # 연결된 컴포넌트 찾기 (간단한 구현)
         from scipy import ndimage
@@ -257,8 +358,18 @@ Blue:  {stats['max_diff']['b']}
 
         return stats, regions
 
-    def create_side_by_side_comparison(self, output_path: str = 'side_by_side.png'):
-        """원본 이미지들과 차이를 나란히 표시합니다."""
+    def create_side_by_side_comparison(self, output_path: str = 'side_by_side.png',
+                                       threshold: int = 20, morphology_kernel_size: int = 0,
+                                       blur_kernel_size: int = 0):
+        """
+        원본 이미지들과 차이를 나란히 표시합니다.
+
+        Args:
+            output_path: 저장할 파일 경로
+            threshold: 차이 임계값
+            morphology_kernel_size: 형태학적 연산 커널 크기
+            blur_kernel_size: 가우시안 블러 커널 크기
+        """
         if self.diff_array is None:
             self.calculate_difference()
 
@@ -280,8 +391,13 @@ Blue:  {stats['max_diff']['b']}
         axes[2].set_title('픽셀 차이')
         axes[2].axis('off')
 
-        # 하이라이트 이미지
-        highlight_img = self.create_diff_image('highlight')
+        # 하이라이트 이미지 (새로운 파라미터 적용)
+        highlight_img = self.create_diff_image(
+            'highlight',
+            threshold=threshold,
+            morphology_kernel_size=morphology_kernel_size,
+            blur_kernel_size=blur_kernel_size
+        )
         axes[3].imshow(highlight_img)
         axes[3].set_title('변경 영역 강조')
         axes[3].axis('off')

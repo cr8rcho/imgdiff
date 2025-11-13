@@ -1,8 +1,8 @@
 {
   "total_pixels": 56169,
   "diff_percentage": 0.1398417497521776,
-  "changed_pixels": 609,
-  "changed_percentage": 1.084227954921754,
+  "changed_pixels": 1,
+  "changed_percentage": 0.001780341469493849,
   "mean_diff": {
     "r": 0.3574035500008902,
     "g": 0.36201463440687925,
