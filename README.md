@@ -147,7 +147,25 @@ python imgdiff_googlesheet.py YOUR_SPREADSHEET_ID --update-sheet
 python imgdiff_googlesheet.py YOUR_SPREADSHEET_ID --range "E5:F" --result-column G --result-row 5
 ```
 
-자세한 사용법은 [GOOGLE_SHEET_GUIDE.md](GOOGLE_SHEET_GUIDE.md) 참조
+### 🆕 외곽선 보정 기능 (Edge Detection)
+
+새롭게 추가된 외곽선 보정 기능을 사용하면 미세한 색상 차이를 무시하고 중요한 변화만 감지할 수 있습니다:
+
+```bash
+# 외곽선 보정을 적용한 이미지 비교
+python imgdiff_googlesheet_url.py YOUR_SPREADSHEET_ID \
+  --threshold 30 \
+  --morphology-kernel-size 3 \
+  --blur-kernel-size 0
+```
+
+- `--threshold`: 차이 감지 임계값 (기본값: 30, 범위: 0-255)
+- `--morphology-kernel-size`: 형태학적 노이즈 제거 커널 크기 (기본값: 3)
+- `--blur-kernel-size`: 가우시안 블러 커널 크기 (기본값: 0/비활성화)
+
+자세한 사용법:
+- [HOW_TO_NEW.md](HOW_TO_NEW.md) - 외곽선 보정 기능을 포함한 전체 사용 가이드
+- [GOOGLE_SHEET_GUIDE.md](GOOGLE_SHEET_GUIDE.md) - 구글 시트 설정 가이드
 
 ## 라이선스
 
