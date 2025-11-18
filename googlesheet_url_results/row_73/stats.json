@@ -1,16 +1,30 @@
 {
-  "total_pixels": 4503640,
-  "diff_percentage": 0.24601549607832107,
-  "changed_pixels": 32881,
-  "changed_percentage": 0.7300983204696645,
-  "mean_diff": {
-    "r": 0.6207434430815962,
-    "g": 0.6319887912888241,
-    "b": 0.6292863106287359
+  "original": {
+    "total_pixels": 1638400,
+    "diff_percentage": 1.7663008546517565,
+    "changed_pixels": 34595,
+    "changed_percentage": 2.11151123046875,
+    "mean_diff": {
+      "r": 4.503973388671875,
+      "g": 4.504254760742188,
+      "b": 4.503973388671875
+    },
+    "max_diff": {
+      "r": 255,
+      "g": 255,
+      "b": 255
+    }
   },
-  "max_diff": {
-    "r": 192,
-    "g": 196,
-    "b": 195
-  }
+  "processed": {
+    "total_pixels": 1638400,
+    "changed_pixels": 31035,
+    "changed_percentage": 1.8942260742187502,
+    "diff_percentage": 1.499483714384191,
+    "processing_applied": {
+      "threshold": 40,
+      "morphology_kernel": 4,
+      "blur_kernel": 0
+    }
+  },
+  "note": "The \"processed\" statistics match the red highlighted areas in diff_highlight.png. \"original\" statistics are based on raw pixel differences without filtering."
 }

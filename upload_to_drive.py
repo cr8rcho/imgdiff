@@ -52,9 +52,11 @@ class DriveImageUploader:
             if os.path.exists(stats_path):
                 with open(stats_path, 'r', encoding='utf-8') as f:
                     stats = json.load(f)
+                    # 'processed' 섹션에서 외곽선 보정이 적용된 통계를 가져옴
+                    processed = stats.get('processed', {})
                     return {
-                        'diff_percentage': stats.get('diff_percentage', 0),
-                        'changed_percentage': stats.get('changed_percentage', 0)
+                        'diff_percentage': processed.get('diff_percentage', 0),
+                        'changed_percentage': processed.get('changed_percentage', 0)
                     }
             else:
                 print(f"  ⚠️ stats.json 파일이 없습니다: {stats_path}")
