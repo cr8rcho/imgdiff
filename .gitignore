@@ -29,6 +29,7 @@ my_results/
 .env
 .vscode/
 .idea/
+.claude/
 
 # 임시 파일
 *.tmp

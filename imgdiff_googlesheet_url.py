@@ -40,9 +40,10 @@ class GoogleSheetURLImageComparator:
     def __init__(self, spreadsheet_id: str, range_name: str = 'B3:C',
                  output_dir: str = 'googlesheet_url_results',
                  threshold: int = 20, morphology_kernel_size: int = 3,
-                 blur_kernel_size: int = 0):
+                 blur_kernel_size: int = 0, sheet_name: Optional[str] = None):
         self.spreadsheet_id = spreadsheet_id
         self.range_name = range_name
+        self.sheet_name = sheet_name
         self.output_dir = output_dir
         self.threshold = threshold
         self.morphology_kernel_size = morphology_kernel_size
@@ -76,6 +77,13 @@ class GoogleSheetURLImageComparator:
 
         self.service = build('sheets', 'v4', credentials=creds)
         print("✅ 구글 시트 API 인증 성공")
+
+        # 범위에 시트명이 없으면 기본값 유지, 있으면 그대로 사용
+        if '!' not in self.range_name:
+            if self.sheet_name:
+                print(f"📍 읽을 범위: '{self.sheet_name}'!{self.range_name}")
+            else:
+                print(f"📍 읽을 범위: {self.range_name}")
 
     def extract_url_from_image(self, cell_value: str) -> Optional[str]:
         """IMAGE 함수에서 URL 추출"""
@@ -133,10 +141,15 @@ class GoogleSheetURLImageComparator:
             raise Exception("먼저 authenticate() 메서드를 실행하세요.")
 
         try:
+            # 범위 지정 (시트명 포함 여부 확인)
+            range_to_read = self.range_name
+            if self.sheet_name and '!' not in range_to_read:
+                range_to_read = f"'{self.sheet_name}'!{self.range_name}"
+
             # 수식 가져오기 (IMAGE 함수 포함)
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=self.spreadsheet_id,
-                range=self.range_name,
+                range=range_to_read,
                 valueRenderOption='FORMULA'  # 수식 그대로 가져오기
             ).execute()
 
@@ -419,6 +432,8 @@ class GoogleSheetURLImageComparator:
 def main():
     parser = argparse.ArgumentParser(description='구글 시트 URL 기반 이미지 비교')
     parser.add_argument('spreadsheet_id', help='구글 시트 ID')
+    parser.add_argument('--sheet-name', default=None,
+                       help='시트명 (지정하지 않으면 기본 시트 사용)')
     parser.add_argument('--range', default='B3:C',
                        help='읽을 범위 (기본값: B3:C)')
     parser.add_argument('--output-dir', default='googlesheet_url_results',
@@ -440,7 +455,8 @@ def main():
         args.output_dir,
         threshold=args.threshold,
         morphology_kernel_size=args.morphology_kernel_size,
-        blur_kernel_size=args.blur_kernel_size
+        blur_kernel_size=args.blur_kernel_size,
+        sheet_name=args.sheet_name
     )
 
     try:

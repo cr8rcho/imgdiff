@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 
 # Google APIs
 try:
@@ -35,10 +36,13 @@ class GCSImageUploader:
         'https://www.googleapis.com/auth/devstorage.full_control'
     ]
 
-    def __init__(self, spreadsheet_id: str, bucket_name: str):
+    def __init__(self, spreadsheet_id: str, bucket_name: str, sheet_name: Optional[str] = None):
         self.spreadsheet_id = spreadsheet_id
         self.bucket_name = bucket_name
-        self.folder_prefix = f"imgdiff_{spreadsheet_id}"
+        self.sheet_name = sheet_name
+        self.sheet_id = None  # 나중에 메타데이터에서 가져옴
+        # timestamp를 사용하여 각 실행마다 고유한 폴더 생성
+        self.folder_prefix = f"imgdiff_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         self.sheet_service = None
         self.storage_client = None
         self.bucket = None
@@ -65,6 +69,29 @@ class GCSImageUploader:
             print(f"  ⚠️ 통계 로드 실패: {e}")
             return {'diff_percentage': 0, 'changed_percentage': 0}
 
+    def get_sheet_id_by_name(self, sheet_name: str) -> Optional[int]:
+        """시트명으로 sheetId 조회"""
+        try:
+            result = self.sheet_service.spreadsheets().get(
+                spreadsheetId=self.spreadsheet_id,
+                fields='sheets.properties'
+            ).execute()
+
+            sheets = result.get('sheets', [])
+            for sheet in sheets:
+                properties = sheet.get('properties', {})
+                if properties.get('title') == sheet_name:
+                    return properties.get('sheetId')
+
+            print(f"❌ 시트명 '{sheet_name}'을(를) 찾을 수 없습니다.")
+            print(f"📋 사용 가능한 시트:")
+            for sheet in sheets:
+                print(f"   - {sheet.get('properties', {}).get('title')}")
+            return None
+        except Exception as e:
+            print(f"❌ 시트 정보 조회 실패: {e}")
+            return None
+
     def authenticate(self):
         """구글 API 인증 (시트 + Cloud Storage)"""
         token_file = 'token_gcs.pickle'
@@ -87,6 +114,16 @@ class GCSImageUploader:
         # 시트 서비스 초기화
         self.sheet_service = build('sheets', 'v4', credentials=self.creds)
         print("✅ 구글 시트 API 인증 성공")
+
+        # 시트명이 지정되면 sheetId 조회
+        if self.sheet_name:
+            self.sheet_id = self.get_sheet_id_by_name(self.sheet_name)
+            if self.sheet_id is None:
+                sys.exit(1)
+            print(f"✅ 시트 '{self.sheet_name}' (ID: {self.sheet_id}) 선택")
+        else:
+            self.sheet_id = 0
+            print(f"✅ 기본 시트 (ID: 0) 선택")
 
         # GCS 클라이언트 초기화
         try:
@@ -228,7 +265,11 @@ class GCSImageUploader:
 
         # 구글 시트 업데이트
         print(f"\n📝 구글 시트 D{start_row}:H{end_row} 업데이트 중...")
-        update_range = f'D{start_row}:H{end_row}'
+        # 시트명이 있으면 포함, 없으면 기본 시트
+        if self.sheet_name:
+            update_range = f"'{self.sheet_name}'!D{start_row}:H{end_row}"
+        else:
+            update_range = f'D{start_row}:H{end_row}'
 
         try:
             body = {'values': update_data}
@@ -241,41 +282,15 @@ class GCSImageUploader:
 
             print(f"✅ 시트 업데이트 완료: {result.get('updatedCells')}개 셀")
 
-            # 행 높이 조정 (이미지 표시용)
-            requests_body = {
-                'requests': [
-                    {
-                        'updateDimensionProperties': {
-                            'range': {
-                                'sheetId': 0,
-                                'dimension': 'ROWS',
-                                'startIndex': start_row - 1,
-                                'endIndex': end_row
-                            },
-                            'properties': {
-                                'pixelSize': 150
-                            },
-                            'fields': 'pixelSize'
-                        }
-                    }
-                ]
-            }
-
-            self.sheet_service.spreadsheets().batchUpdate(
-                spreadsheetId=self.spreadsheet_id,
-                body=requests_body
-            ).execute()
-
-            print("✅ 행 높이 조정 완료")
-
             # 헤더 추가 (D2:H2)
             if start_row == 3:
+                header_range = f"'{self.sheet_name}'!D2:H2" if self.sheet_name else 'D2:H2'
                 header_body = {
                     'values': [['차이 강조', '나란히 비교', '판정', '차이율 (%)', '변경 픽셀 (%)']]
                 }
                 self.sheet_service.spreadsheets().values().update(
                     spreadsheetId=self.spreadsheet_id,
-                    range='D2:H2',
+                    range=header_range,
                     valueInputOption='USER_ENTERED',
                     body=header_body
                 ).execute()
@@ -285,28 +300,83 @@ class GCSImageUploader:
             print(f"❌ 시트 업데이트 실패: {err}")
 
 
+def parse_range(range_str: str) -> Tuple[int, int, Optional[str]]:
+    """범위 문자열을 파싱하여 (시작행, 종료행, 시트명) 반환
+
+    예시:
+    - "3:1002" → (3, 1002, None)
+    - "B3:C10" → (3, 10, None)
+    - "'시트명'!B3:C10" → (3, 10, "시트명")
+    """
+    sheet_name = None
+
+    # 시트명이 있으면 분리
+    if '!' in range_str:
+        sheet_part, range_part = range_str.split('!', 1)
+        sheet_name = sheet_part.strip().strip("'\"").rstrip('\\')  # 쉘 이스케이프 처리
+        range_str = range_part
+
+    # 범위 분리
+    parts = range_str.split(':')
+    if len(parts) != 2:
+        raise ValueError(f"올바른 범위 형식이 아닙니다: {range_str}")
+
+    start_cell = parts[0].strip().strip("'\"").rstrip('\\')
+    end_cell = parts[1].strip().strip("'\"").rstrip('\\')
+
+    # 행 번호만 추출
+    start_row = int(''.join(filter(str.isdigit, start_cell)))
+    end_row = int(''.join(filter(str.isdigit, end_cell)))
+
+    return (start_row, end_row, sheet_name)
+
+
 def main():
     parser = argparse.ArgumentParser(description='이미지를 GCS에 업로드하고 시트에 표시 (고속 병렬 처리)')
     parser.add_argument('spreadsheet_id', help='구글 시트 ID')
     parser.add_argument('--bucket', default='imgdiff-results', help='GCS 버킷 이름 (기본값: imgdiff-results)')
-    parser.add_argument('--start', type=int, default=3, help='시작 행')
-    parser.add_argument('--end', type=int, default=7, help='종료 행')
+
+    # --range 또는 --start/--end 옵션 지원
+    parser.add_argument('--range', default=None, help='읽을 범위 (예: "B3:C1002", "3:1002", "\'시트명\'!B3:C1002")')
+    parser.add_argument('--start', type=int, default=3, help='시작 행 (--range를 사용하지 않을 때만 적용)')
+    parser.add_argument('--end', type=int, default=7, help='종료 행 (--range를 사용하지 않을 때만 적용)')
+    parser.add_argument('--sheet-name', default=None, help='시트명 (기본값: None, sheet_id 0 사용)')
+
     parser.add_argument('--workers', type=int, default=10, help='동시 업로드 수 (기본값: 10)')
 
     args = parser.parse_args()
 
-    uploader = GCSImageUploader(args.spreadsheet_id, args.bucket)
+    # 범위 파싱
+    sheet_name = args.sheet_name  # --sheet-name 옵션 우선
+    if args.range:
+        try:
+            start_row, end_row, range_sheet_name = parse_range(args.range)
+            print(f"📍 범위: {args.range} → 행 {start_row}~{end_row}")
+            # --sheet-name 옵션이 없으면 범위에서 파싱한 시트명 사용
+            if not sheet_name:
+                sheet_name = range_sheet_name
+            if sheet_name:
+                print(f"📋 시트명: {sheet_name}")
+        except ValueError as e:
+            print(f"❌ 범위 파싱 오류: {e}")
+            sys.exit(1)
+    else:
+        start_row = args.start
+        end_row = args.end
+        print(f"📍 범위: 행 {start_row}~{end_row} (--start/--end 옵션 사용)")
+
+    uploader = GCSImageUploader(args.spreadsheet_id, args.bucket, sheet_name=sheet_name)
 
     print("🔐 인증 중...")
     uploader.authenticate()
     uploader.create_public_bucket()
 
-    uploader.update_sheet_with_images(args.start, args.end, args.workers)
+    uploader.update_sheet_with_images(start_row, end_row, args.workers)
 
     print(f"\n✨ 완료!")
     print(f"📊 구글 시트 확인: https://docs.google.com/spreadsheets/d/{args.spreadsheet_id}/edit")
     print(f"💡 GCS 버킷: https://console.cloud.google.com/storage/browser/{args.bucket}")
-    print(f"📁 GCS 폴더: https://console.cloud.google.com/storage/browser/{args.bucket}/imgdiff_{args.spreadsheet_id}")
+    print(f"📁 GCS 폴더: https://console.cloud.google.com/storage/browser/{args.bucket}/{uploader.folder_prefix}")
 
     return 0
 
